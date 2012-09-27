@@ -1,0 +1,23 @@
+Name:                seqtools
+Version:             0.0
+Cabal-Version:       >= 1.14
+License:             MIT
+Author:              Nick Ingolia
+Maintainer:          nick@ingolia.org
+Build-Type:          Simple
+Synopsis:            Analyze ribosome profiling data
+Homepage:            http://www.ingolia-lab.org/
+Category:            Bioinformatics
+
+Source-Repository head
+  type: git
+  location: http://github.com/ingolia/SeqTools
+
+Executable bed-feature-coverage
+  Main-is:             BedFeatureCoverage.hs
+  Build-depends:       base, bytestring, attoparsec >= 0.8.5, iteratee, cmdtheline >= 0.2,
+                       transformers, monads-tf, vector, unordered-containers, statistics,
+                       seqloc, seqloc-datafiles, samtools >= 0.1.2, samtools-iteratee
+  Hs-Source-Dirs:      src
+  Ghc-options:         -auto-all -O2 -Wall
+  Default-Language:    Haskell2010
