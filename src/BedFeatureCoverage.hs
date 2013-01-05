@@ -44,18 +44,18 @@ main = run ( termCoverage, info)
                      , version = "0.0"
                      , termDoc = "Compute per-feature coverage statistics for a BED file"
                      }
-        termCoverage = coverage <$> bamfile <*> bedfile <*> output
-        coverage bam bed out = BamIdx.withIndex bam $ \hidx -> 
+        termCoverage = coverage <$> strandedness <*> bamfile <*> bedfile <*> output
+        coverage str bam bed out = BamIdx.withIndex bam $ \hidx -> 
           withFile out WriteMode $ \hout ->
-          processBed hidx hout bed
+          processBed hidx hout str bed
 
-processBed :: BamIdx.IdxHandle -> Handle -> FilePath -> IO ()
-processBed hidx hout = IterIO.fileDriver trxIter 
+processBed :: BamIdx.IdxHandle -> Handle -> Maybe Strand -> FilePath -> IO ()
+processBed hidx hout str = IterIO.fileDriver trxIter 
   where trxIter = Bed.bedTranscriptEnum $ IterLL.mapM_ trxOne
-        trxOne trx = trxLine hidx trx >>= BS.hPutStr hout
+        trxOne trx = trxLine hidx trx str >>= BS.hPutStr hout
 
-trxLine :: BamIdx.IdxHandle -> Transcript -> IO (BS.ByteString)
-trxLine hidx trx = liftM (maybe "" profLine) $ countTrxReads hidx trx
+trxLine :: BamIdx.IdxHandle -> Transcript -> Maybe Strand -> IO (BS.ByteString)
+trxLine hidx trx str = liftM (maybe "" profLine) $ countTrxReads hidx trx str
   where profLine prof = let fields = statFields prof
                         in BS.unlines . (: []) $
                            BS.intercalate "\t" $
@@ -85,21 +85,22 @@ statFields zprof = map BS.pack [ show $ U.length zprof
                      unifAt i = (fromIntegral $ i + 1) / (fromIntegral $ U.length cprof)
                  in (U.sum $ U.zipWith (-) cprof unif) / (fromIntegral $ U.length cprof)
         
-countTrxReads :: BamIdx.IdxHandle -> Transcript -> IO (Maybe (U.Vector Int))
-countTrxReads hidx trx = maybe (return Nothing) (liftM Just . withTarget) $ 
-                         Bam.lookupTarget header $ unSeqLabel trxref
+countTrxReads :: BamIdx.IdxHandle -> Transcript -> Maybe Strand -> IO (Maybe (U.Vector Int))
+countTrxReads hidx trx str = maybe (return Nothing) (liftM Just . withTarget) $ 
+                             Bam.lookupTarget header $ unSeqLabel trxref
   where header = BamIdx.idxHeader hidx
         (OnSeq trxref trxsploc) = location trx
         trxbnds = (fromIntegral *** fromIntegral) $ Loc.bounds trxsploc
         withTarget tid = do prof <- UM.replicate (fromIntegral $ Loc.length $ trxsploc) 0
-                            let countReads = IterLL.mapM_ $ countRead prof trxsploc
+                            let countReads = IterLL.mapM_ $ countRead prof trxsploc str
                                 targetIter = IterLL.joinIM $ BamIter.enumIndexRegion hidx tid trxbnds countReads
                             IterLL.run targetIter
                             U.freeze prof
                      
-countRead :: (MonadIO m) => UM.IOVector Int -> SpLoc.SpliceLoc -> Bam.Bam1 -> m ()
-countRead prof trxsploc b = case Bam.refSpLoc b >>= liftM Loc.startPos . flip SpLoc.locInto trxsploc of
-  Just (Pos.Pos off Plus) -> countOne prof $ fromIntegral off
+countRead :: (MonadIO m) => UM.IOVector Int -> SpLoc.SpliceLoc -> Maybe Strand -> Bam.Bam1 -> m ()
+countRead prof trxsploc str b = case Bam.refSpLoc b >>= liftM Loc.startPos . flip SpLoc.locInto trxsploc of
+  Just (Pos.Pos off Plus)  | str /= (Just Minus) -> countOne prof $ fromIntegral off
+  Just (Pos.Pos off Minus) | str /= (Just Plus)  -> countOne prof $ fromIntegral off
   _ -> return ()
 
 countOne :: (MonadIO m) => UM.IOVector Int -> Int -> m ()
@@ -117,3 +118,9 @@ bedfile = required $ opt Nothing $ (optInfo [ "b", "bed" ])
 
 bamfile :: Term String
 bamfile = required $ pos 0 Nothing $ posInfo { posName = "BAM", posDoc = "BAM-format alignments" }
+
+strandedness :: Term (Maybe Strand)
+strandedness = value $ vFlag Nothing
+             [ (Just Minus, (optInfo [ "r", "reverse" ]) { optDoc = "Reverse-strand hits only" })
+             , (Just Plus,  (optInfo [ "f", "forward" ]) { optDoc = "Forward-strand hits only" })
+             ]
